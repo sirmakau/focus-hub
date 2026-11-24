@@ -8,7 +8,7 @@ export function createApp() {
 
   app.use(express.json({ limit: '1mb' }));
 
-  app.use('/telegram/webhook', webhookRoutes);
+  app.use('/telegram', webhookRoutes);
 
   app.get('/health', (_req, res) => {
     res.json({

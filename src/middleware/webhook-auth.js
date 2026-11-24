@@ -10,7 +10,10 @@ export function webhookAuth(req, res, next) {
   }
 
   const provided =
-    req.query?.secret || req.headers['x-telegram-webhook-secret'] || '';
+    req.headers['x-telegram-bot-api-secret-token'] ||
+    req.query?.secret ||
+    req.headers['x-telegram-webhook-secret'] ||
+    '';
 
   if (provided !== env.telegram.webhookSecret) {
     const error = new AppError('Invalid webhook secret', {
