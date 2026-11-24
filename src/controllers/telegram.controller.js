@@ -1,11 +1,7 @@
 import { AppError } from '../middleware/error-handler.js';
 import { env } from '../config/env.js';
 import { isDuplicateUpdate } from '../bot/update-dedupe.js';
-import {
-  handleStart,
-  handleHelp,
-  handleToday,
-} from '../bot/commands.js';
+import { commandHandler } from '../bot/commands.js';
 
 const TELEGRAM_UPDATE_TYPES = new Set([
   'message',
@@ -24,6 +20,10 @@ function getUserIdFromUpdate(update) {
   if (update.channel_post?.from) return update.channel_post.from.id;
   if (update.edited_channel_post?.from) return update.edited_channel_post.from.id;
   return null;
+}
+
+function displayNameFrom(from = {}) {
+  return [from.first_name, from.last_name].filter(Boolean).join(' ') || null;
 }
 
 export async function handleTelegramUpdate(req, res, next) {
@@ -64,7 +64,7 @@ export async function handleTelegramUpdate(req, res, next) {
       return res.status(200).json({ received: true, ignored: true });
     }
 
-    await handleUpdate(update);
+    await handleUpdate(update, userId);
 
     return res.status(200).json({ received: true });
   } catch (error) {
@@ -72,45 +72,27 @@ export async function handleTelegramUpdate(req, res, next) {
   }
 }
 
-async function handleUpdate(update) {
-  if (update.message?.text) {
-    const text = update.message.text.trim();
-    const userId = update.message.from.id;
-    const chatId = update.message.chat.id;
+async function handleUpdate(update, userId) {
+  if (update.message) {
+    const message = update.message;
 
-    if (text === '/start') {
-      await handleStart({ userId, chatId, update });
-      return;
-    }
-
-    if (text === '/help') {
-      await handleHelp({ userId, chatId, update });
-      return;
-    }
-
-    if (text === '/today') {
-      await handleToday({ userId, chatId, update });
-      return;
-    }
+    await commandHandler.handleMessage({
+      telegramId: userId,
+      chatId: message.chat?.id ?? userId,
+      displayName: displayNameFrom(message.from),
+      text: message.text ?? '',
+    });
+    return;
   }
 
   if (update.callback_query) {
-    await handleCallbackQuery(update);
+    // No interactive buttons exist yet, so there is nothing to act on.
+    console.log('[telegram] unhandled callback:', update.callback_query.data);
     return;
   }
 
-  console.log('[telegram] unhandled update type:', JSON.stringify(update).slice(0, 200));
-}
-
-async function handleCallbackQuery(update) {
-  const callback = update.callback_query;
-  const userId = callback.from.id;
-
-  if (!env.telegram.authorizedUserIds.includes(userId)) {
-    console.warn(`[telegram] unauthorised callback user: ${userId}`);
-    return;
-  }
-
-  // TODO: implement callback handling with idempotency once buttons exist.
-  console.log('[telegram] unhandled callback:', callback.data);
+  console.log(
+    '[telegram] unhandled update type:',
+    JSON.stringify(update).slice(0, 200)
+  );
 }

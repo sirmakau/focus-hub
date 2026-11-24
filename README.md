@@ -103,6 +103,20 @@ npm run type-check
 
 This is currently informational. The source files are plain JavaScript; stricter typing would require `@types/*` packages and/or JSDoc annotations.
 
+## Bot commands
+
+| Command | Behaviour |
+| --- | --- |
+| `/start` | Registers the Telegram user and sends a welcome message |
+| `/help` | Lists the commands that actually exist |
+| `/today` | Today's scheduled tasks in the user's timezone |
+| `/pending` | Open tasks across days, with their date |
+| `/add <title>` | Creates a flexible, unscheduled task |
+| `/done <ref>` | Completes a task by its short reference |
+| `/cancel <ref>` | Cancels a task by its short reference |
+
+Task references (first 8 characters of the UUID) are shown in `/today` and `/pending` output.
+
 ## Webhook setup
 
 Telegram sends updates to:
@@ -185,30 +199,30 @@ focus-hub/
 
 ## Current status
 
-This is the Phase 1 foundation skeleton:
+Working end to end:
 
-- Express app with a Telegram webhook route
+- Express app with a Telegram webhook route and secret validation
 - Environment validation
-- PostgreSQL pool and transaction helper
-- Structured error handling
-- Webhook secret middleware
-- Health check
-- Initial PostgreSQL migration file
-- Service, repository, and worker skeletons for the planned feature set
+- PostgreSQL pool, transaction helper and tracked migrations
+- Structured error handling, JSON body validation, update de-duplication
+- Health check that reports live database reachability
+- Telegram commands: `/start`, `/help`, `/today`, `/pending`, `/add`, `/done`, `/cancel`
+- Task persistence with per-user scoping and `task_history` entries
 
 What is **not** implemented yet:
 
-- full Telegram command handling beyond skeletons
-- task persistence
-- reminder queue and worker behavior
-- scheduling engine
-- AI features
+- reminders: the queue table exists but the worker is a skeleton
+- scheduling engine: no slot finding, rescheduling or energy-aware placement
+- calendars: commitments can be stored but are not read by the bot
+- display of `task_history` to the user
+- daily and weekly reviews
+- AI / natural-language requests
 
 ## Roadmap summary
 
-1. Foundation — Express, env, Neon, migrations, health
-2. Telegram integration — webhook, `/start`, `/help`, `/today`
-3. Task management — create, list, complete, skip, reschedule, history
+1. Foundation — Express, env, Neon, migrations, health ✅
+2. Telegram integration — webhook, `/start`, `/help`, `/today` ✅
+3. Task management — create, list, complete, cancel, history (in progress: skip, reschedule)
 4. Reminder engine — persistent queue, worker, retries, interactive buttons
 5. Time intelligence — timetable, fixed commitments, buffers, controlled rescheduling, energy
 6. Reviews and intelligence — daily/weekly reviews, patterns, natural-language AI
