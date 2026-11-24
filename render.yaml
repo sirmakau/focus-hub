@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: focus-hub
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DEFAULT_TIMEZONE
+        value: Africa/Nairobi
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: AUTHORIZED_TELEGRAM_USER_IDS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+    healthCheckPath: /health
