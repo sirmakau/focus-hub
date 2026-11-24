@@ -27,7 +27,7 @@ export async function handleHelp({ userId, chatId, update }) {
     '/help    - Show this message',
     '',
     'Natural-language requests will be added later.',
-  ].join('\n'), { parseMode: 'Markdown' });
+  ].join('\n'), { parse_mode: 'Markdown' });
 }
 
 export async function handleToday({ userId, chatId, update }) {

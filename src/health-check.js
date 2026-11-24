@@ -28,10 +28,16 @@ async function run() {
     console.log(`[health] health server listening on port ${port}`);
   });
 
-  const healthPath =
+  // APP_URL may be configured with or without a trailing slash, so resolve
+  // the health path against it instead of concatenating strings.
+  const baseUrl =
     env.nodeEnv === 'production'
-      ? `https://${env.appUrl.replace(/^https?:\/\//, '')}/health`
-      : `http://localhost:${port}/health`;
+      ? env.appUrl.startsWith('http')
+        ? env.appUrl
+        : `https://${env.appUrl}`
+      : `http://localhost:${port}`;
+
+  const healthPath = new URL('/health', baseUrl).toString();
 
   console.log('[health] checking application health endpoint:', healthPath);
 

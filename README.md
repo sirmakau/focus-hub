@@ -77,10 +77,21 @@ Healthy response example:
 ```json
 {
   "status": "ok",
+  "database": "up",
   "environment": "development",
   "timestamp": "2026-02-02T10:00:00.000Z"
 }
 ```
+
+If the database cannot be reached the endpoint still answers `200` (so Render does not restart the service) but reports `"status": "degraded"` and `"database": "down"`.
+
+### Tests
+
+```bash
+npm test
+```
+
+Runs the Node.js built-in test runner against `tests/`. No extra dependencies are required.
 
 ### Type checking
 

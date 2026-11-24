@@ -10,6 +10,25 @@ export class AppError extends Error {
 export function errorHandler(err, req, res, _next) {
   console.error('[error]', err);
 
+  // Body parser failures are client errors, not server errors.
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_JSON',
+        message: 'Request body is not valid JSON',
+      },
+    });
+  }
+
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'Request body is too large',
+      },
+    });
+  }
+
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
       error: {

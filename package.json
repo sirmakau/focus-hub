@@ -10,7 +10,8 @@
     "db:migrate": "node database/migrate.js",
     "db:seed": "node database/seed.js",
     "health": "node src/health-check.js",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=18"

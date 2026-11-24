@@ -7,7 +7,9 @@ export const pool = new Pool({
   connectionString: env.database.url,
   max: env.isProduction ? 10 : 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  // Neon suspends idle computes and needs several seconds to wake, so the
+  // connect timeout has to be generous enough to survive a cold start.
+  connectionTimeoutMillis: 15000,
 });
 
 pool.on('error', (err) => {

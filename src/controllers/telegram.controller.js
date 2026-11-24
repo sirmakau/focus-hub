@@ -1,5 +1,6 @@
 import { AppError } from '../middleware/error-handler.js';
 import { env } from '../config/env.js';
+import { isDuplicateUpdate } from '../bot/update-dedupe.js';
 import {
   handleStart,
   handleHelp,
@@ -35,6 +36,12 @@ export async function handleTelegramUpdate(req, res, next) {
       });
     }
 
+    // Telegram retries updates that do not get a 2xx response, so a
+    // duplicate delivery must be acknowledged rather than reprocessed.
+    if (isDuplicateUpdate(update.update_id)) {
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
     const updateType = Object.keys(update).find((key) =>
       TELEGRAM_UPDATE_TYPES.has(key)
     );
@@ -49,13 +56,12 @@ export async function handleTelegramUpdate(req, res, next) {
     }
 
     if (!env.telegram.authorizedUserIds.includes(userId)) {
+      // Acknowledge and drop unauthorised updates. Returning an error would
+      // make Telegram retry the same update for hours.
       console.warn(
         `[telegram] unauthorised user attempted access: ${userId}`
       );
-      throw new AppError('Unauthorised Telegram user', {
-        statusCode: 403,
-        code: 'UNAUTHORISED_USER',
-      });
+      return res.status(200).json({ received: true, ignored: true });
     }
 
     await handleUpdate(update);
@@ -101,10 +107,8 @@ async function handleCallbackQuery(update) {
   const userId = callback.from.id;
 
   if (!env.telegram.authorizedUserIds.includes(userId)) {
-    throw new AppError('Unauthorised callback user', {
-      statusCode: 403,
-      code: 'UNAUTHORISED_USER',
-    });
+    console.warn(`[telegram] unauthorised callback user: ${userId}`);
+    return;
   }
 
   // TODO: implement callback handling with idempotency once buttons exist.
