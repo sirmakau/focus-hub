@@ -25,6 +25,7 @@ export const HISTORY_EVENT_TYPES = [
   'auto_adjusted',
   'cancelled',
   'restored',
+  'edited',
 ];
 
 export const ACTORS = ['user', 'system', 'ai'];
@@ -95,6 +96,7 @@ export function createTaskService({
           description: input.description,
           priority: input.priority,
           schedulingType: input.schedulingType,
+          categoryId: input.categoryId,
           estimatedMinutes: input.estimatedMinutes,
           scheduledStart: input.scheduledStart,
           scheduledEnd: input.scheduledEnd,
@@ -106,11 +108,19 @@ export function createTaskService({
           userId: user.id,
           eventType: 'created',
           newStatus: task.status,
+          newScheduledStart: task.scheduled_start,
+          newScheduledEnd: task.scheduled_end,
+          reason: input.reason ?? null,
           actor: input.actor ?? 'user',
         });
 
         return task;
       });
+    },
+
+    /** Resolve a task by its short reference, scoped to the user. */
+    async getTask(user, reference) {
+      return resolveTask(null, user, reference);
     },
 
     async listTodayTasks(user) {

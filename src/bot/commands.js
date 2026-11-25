@@ -16,7 +16,7 @@ export const HELP_TEXT = [
   '/cancel  - Cancel a task, e.g. /cancel 1a2b3c4d',
   '/help    - Show this message',
   '',
-  'Task references come from /pending or /today.',
+  'Tip: send /start to open the button dashboard — no commands needed.',
 ].join('\n');
 
 const UNKNOWN_COMMAND = 'I do not know that command yet. Send /help to see what works.';
@@ -33,6 +33,8 @@ export function createCommandHandler({
   send = sendMessage,
   tasks = createTaskService(),
   users = createUserRepository(),
+  onText = null,
+  onStartMenu = null,
 } = {}) {
   async function reply(chatId, text) {
     await send(chatId, text);
@@ -97,6 +99,20 @@ export function createCommandHandler({
           timezone: env.defaultTimezone,
         });
 
+        if (onStartMenu) {
+          try {
+            await onStartMenu({ user, chatId });
+          } catch (error) {
+            // A failed dashboard must not leave Telegram retrying /start.
+            console.error('[commands] could not open the planner:', error.message);
+            await reply(
+              chatId,
+              '⚠️ I could not open your planner just now. Send /start again in a moment.'
+            );
+          }
+          return;
+        }
+
         const name = user.display_name ? `, ${user.display_name}` : '';
         await reply(
           chatId,
@@ -117,6 +133,12 @@ export function createCommandHandler({
       }
 
       if (!command.startsWith('/')) {
+        // Guided flows consume plain text (task names, dates, times).
+        if (onText) {
+          const handled = await onText({ telegramId, chatId, text });
+          if (handled) return;
+        }
+
         await reply(chatId, NOT_A_COMMAND);
         return;
       }

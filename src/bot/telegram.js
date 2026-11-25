@@ -72,6 +72,16 @@ export async function sendMessage(chatId, text, options = {}) {
   return telegramRequest('sendMessage', payload);
 }
 
+export async function editMessageText(chatId, messageId, text, options = {}) {
+  return telegramRequest('editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    disable_web_page_preview: true,
+    ...options,
+  });
+}
+
 export async function answerCallbackQuery(callbackQueryId, options = {}) {
   return telegramRequest('answerCallbackQuery', {
     callback_query_id: callbackQueryId,

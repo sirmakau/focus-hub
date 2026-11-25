@@ -1,7 +1,20 @@
 import { AppError } from '../middleware/error-handler.js';
 import { env } from '../config/env.js';
 import { isDuplicateUpdate } from '../bot/update-dedupe.js';
-import { commandHandler } from '../bot/commands.js';
+import { createCommandHandler } from '../bot/commands.js';
+import { callbackHandler } from '../bot/callbacks.js';
+import { plannerBot } from '../bot/planner.js';
+import { createCategoryRepository } from '../repositories/category.repository.js';
+
+const categories = createCategoryRepository();
+
+const commandHandler = createCommandHandler({
+  async onStartMenu({ user, chatId }) {
+    await categories.ensureDefaults(null, user.id);
+    await plannerBot.openDashboard({ user, chatId });
+  },
+  onText: (input) => plannerBot.handleText(input),
+});
 
 const TELEGRAM_UPDATE_TYPES = new Set([
   'message',
@@ -86,8 +99,7 @@ async function handleUpdate(update, userId) {
   }
 
   if (update.callback_query) {
-    // No interactive buttons exist yet, so there is nothing to act on.
-    console.log('[telegram] unhandled callback:', update.callback_query.data);
+    await callbackHandler.handleCallbackQuery(update.callback_query);
     return;
   }
 

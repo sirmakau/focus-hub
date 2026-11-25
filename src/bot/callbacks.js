@@ -1,22 +1,48 @@
 /**
  * Callback query processing.
  *
- * In the initial release most interactive buttons are not yet defined,
- * so this module is a placeholder that documents the intended contract:
+ * Routing, authorisation and error handling live in the planner bot; this
+ * module is the single entry point for `callback_query` updates.
  *
- * - Every callback handler must be idempotent.
- * - Repeated button presses must not create duplicate changes.
- * - Updates must be acknowledged with answerCallbackQuery.
- * - Database changes must verify task/user ownership.
+ * Invariants:
+ * - every callback is acknowledged with answerCallbackQuery
+ * - callback data is validated against a fixed route table
+ * - task and session lookups are scoped to the Telegram user
+ * - repeated presses cannot create duplicate tasks or state changes
  */
 
+import { plannerBot } from './planner.js';
+
+export function createCallbackHandler({ planner = plannerBot } = {}) {
+  return {
+    async handleCallbackQuery(callback) {
+      await planner.handleCallback({
+        telegramId: callback.from?.id,
+        chatId: callback.message?.chat?.id,
+        messageId: callback.message?.message_id ?? null,
+        callbackId: callback.id,
+        data: callback.data,
+      });
+    },
+
+    /**
+     * @returns {Promise<boolean>} whether the update was handled
+     */
+    async handleCallbackUpdate(update) {
+      const callback = update?.callback_query;
+
+      if (!callback) {
+        return false;
+      }
+
+      await this.handleCallbackQuery(callback);
+      return true;
+    },
+  };
+}
+
+export const callbackHandler = createCallbackHandler();
+
 export async function handleCallbackUpdate(update) {
-  const callback = update.callback_query;
-
-  if (!callback) {
-    return;
-  }
-
-  // TODO: implement once interactive task buttons exist.
-  console.log('[callbacks] unhandled callback data:', callback.data);
+  return callbackHandler.handleCallbackUpdate(update);
 }
