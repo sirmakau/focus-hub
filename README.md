@@ -65,6 +65,10 @@ Migrations live in `database/migrations/`. The initial schema is intended to be 
 `002_planner_sessions.sql` adds the `planner_sessions` table that stores unfinished
 guided forms. The interactive planner needs it; slash commands work without it.
 
+`003_manual_edits.sql` adds `calendar_event_history`, a `details` column on
+`task_history` (previous/new values for Undo) and a soft-delete column on
+`calendar_events`. Manual editing and Undo need it.
+
 ### Health check
 
 A standalone check that boots the app and verifies basic reachability, including the database if configured:
@@ -135,6 +139,26 @@ calculated in the user's timezone (`Africa/Nairobi` by default).
 Opening a day shows the full date, fixed calendar commitments, scheduled tasks in
 chronological order, the number of unscheduled tasks, and the latest energy check-in.
 Each task opens a card with **Complete**, **Reschedule**, **Edit** and **Cancel**.
+Each commitment opens its own card with **Edit**, **Date & time**, **Fixed/Flexible**
+and **Delete**.
+
+### Manual editing
+
+Fixed protects an item from the planner's automation, not from its owner. Both tasks
+and calendar commitments can be edited by hand:
+
+- title, description, category, priority and fixed/flexible type
+- exact start and end times (typed as `HH:MM`), so no predefined slot is required
+- a new date, including another week
+- a custom duration that keeps the start time
+- deletion of a commitment, which is soft and reversible
+
+A change that overlaps a task or commitment shows the exact conflicting item and its
+time. The user can go back, choose another time, or explicitly **Save anyway**;
+nothing else is ever moved to make room. Every change is recorded with previous and
+new values, actor `user` and a timestamp, and the item card offers **Undo**.
+Task changes go to `task_history`; commitment changes go to
+`calendar_event_history`.
 
 ### Guided task creation
 
@@ -145,9 +169,9 @@ from the day's real free time. Every step has Back and Cancel. Answers are store
 
 ### Scheduling rules
 
-- fixed commitments are never moved automatically
+- fixed commitments are never moved automatically (manual changes are allowed)
 - flexible tasks may be rescheduled
-- overlapping tasks and calendar events are refused
+- overlapping tasks and calendar events are refused unless the user accepts the conflict
 - sleep is protected: tasks stay between 06:00 and 22:00
 - deadlines are enforced
 - a day is capped at 8 hours of scheduled work
@@ -160,9 +184,14 @@ from the day's real free time. Every step has Back and Cancel. Answers are store
 2. Deploy, or run `npm run dev` with a public webhook URL.
 3. Send `/start` — the weekly dashboard should appear.
 4. Tap a day, then a task; try Complete, Reschedule, Edit and Cancel.
-5. Tap **Add task** and walk the whole flow, including Back, Cancel and the final
+5. On a task, open **Edit → Exact date & time**, send a start and an end, and confirm.
+   Try a time that overlaps a commitment: the conflict must name the item before
+   **Save anyway** is offered.
+6. Open a fixed commitment from the day view, change its title or time, then tap
+   **Undo** on the card.
+7. Tap **Add task** and walk the whole flow, including Back, Cancel and the final
    confirmation. Press **Yes, save** twice to confirm only one task is created.
-6. Verify times and dates are shown in Nairobi time.
+8. Verify times and dates are shown in Nairobi time.
 
 ## Webhook setup
 
@@ -249,7 +278,8 @@ focus-hub/
 ├── database/
 │   └── migrations/
 │       ├── 001_initial_schema.sql
-│       └── 002_planner_sessions.sql
+│       ├── 002_planner_sessions.sql
+│       └── 003_manual_edits.sql
 ├── tests/
 ├── .env.example
 ├── .gitignore
@@ -271,6 +301,10 @@ Working end to end:
 - Button-driven weekly dashboard with Monday–Sunday navigation
 - Day view with fixed commitments, scheduled tasks and unscheduled tasks
 - Task cards with Complete, Reschedule, Edit and Cancel, all confirmed
+- Commitment cards with their own edit, date/time, fixed/flexible and delete actions
+- Exact date/start/end editing with explicit conflict acceptance
+- History and Undo for both tasks (`task_history`) and commitments
+  (`calendar_event_history`)
 - Guided task creation and editing stored in `planner_sessions`
 - Slot suggestions that respect commitments, buffers, rest hours, deadlines and energy
 - Weekly review summary
@@ -289,9 +323,10 @@ What is **not** implemented yet:
 2. Telegram integration — webhook, `/start`, `/help`, `/today` ✅
 3. Task management — create, list, complete, cancel, history ✅
 4. Interactive planner — weekly dashboard, guided creation, reschedule, review ✅
-5. Reminder engine — persistent queue, worker, retries, interactive buttons
-6. Time intelligence — recurring timetable, buffers, controlled unattended rescheduling
-7. Reviews and intelligence — daily reviews, patterns, natural-language AI
+5. Manual control — item editing, exact times, conflicts, calendar history, undo ✅
+6. Reminder engine — persistent queue, worker, retries, interactive buttons
+7. Time intelligence — recurring timetable, buffers, controlled unattended rescheduling
+8. Reviews and intelligence — daily reviews, patterns, natural-language AI
 
 ## Implementation principles
 

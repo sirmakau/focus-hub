@@ -4,13 +4,19 @@ import { AppError } from '../middleware/error-handler.js';
 import {
   endOfZonedDay,
   formatDateLong,
+  hhmmToMinutes,
   isDateString,
   isTimeString,
+  minutesOfDay,
+  minutesToHHMM,
+  todayInZone,
+  zonedDateOf,
   zonedWallTimeToUtc,
 } from '../utils/dates.js';
 
 export const ADD_FLOW = 'add_task';
 export const EDIT_FLOW = 'edit_task';
+export const SCHEDULE_FLOW = 'edit_schedule';
 
 export const FLOW_STEPS = [
   'day',
@@ -28,6 +34,12 @@ export const FLOW_STEPS = [
   'custom_deadline',
   'edit_menu',
   'edit_title',
+  'edit_description',
+  'edit_duration',
+  'schedule_date',
+  'schedule_start',
+  'schedule_end',
+  'schedule_confirm',
 ];
 
 const NEXT_STEP = {
@@ -61,6 +73,11 @@ const PREVIOUS_STEP = {
   custom_time: 'time',
   custom_deadline: 'deadline',
   edit_title: 'edit_menu',
+  edit_description: 'edit_menu',
+  edit_duration: 'edit_menu',
+  schedule_start: 'schedule_date',
+  schedule_end: 'schedule_start',
+  schedule_confirm: 'schedule_end',
 };
 
 const DURATION_MINUTES = [15, 30, 45, 60, 120];
@@ -99,6 +116,17 @@ export function createFlowService({
     const nextStep = step ?? NEXT_STEP[session.step];
 
     return sessions.update(user, { step: nextStep, payload });
+  }
+
+  async function scheduleSession(user) {
+    const session = await sessions.get(user);
+    if (!session || session.flow !== SCHEDULE_FLOW) {
+      throw new AppError('That change has expired. Open the task again.', {
+        statusCode: 410,
+        code: 'FLOW_EXPIRED',
+      });
+    }
+    return session;
   }
 
   return {
@@ -380,11 +408,11 @@ export function createFlowService({
 
     /* ------------------------------------------------------------ edit flow */
 
-    async startEdit(user, task) {
+    async startEdit(user, item, { kind = 'task' } = {}) {
       return sessions.start(user, {
         flow: EDIT_FLOW,
         step: 'edit_menu',
-        payload: { taskRef: task.id.slice(0, 8), title: task.title },
+        payload: { kind, taskRef: item.id.slice(0, 8), title: item.title },
         replace: true,
       });
     },
@@ -394,6 +422,20 @@ export function createFlowService({
       if (!session) throw expired();
 
       return sessions.update(user, { step: 'edit_title', payload: session.payload });
+    },
+
+    async requestEditDescription(user) {
+      const session = await sessions.get(user);
+      if (!session) throw expired();
+
+      return sessions.update(user, { step: 'edit_description', payload: session.payload });
+    },
+
+    async requestEditDuration(user) {
+      const session = await sessions.get(user);
+      if (!session) throw expired();
+
+      return sessions.update(user, { step: 'edit_duration', payload: session.payload });
     },
 
     async applyEdit(user, field, value) {
@@ -406,6 +448,7 @@ export function createFlowService({
         });
       }
 
+      const kind = session.payload.kind ?? 'task';
       const fields = {};
 
       if (field === 'title') {
@@ -435,6 +478,17 @@ export function createFlowService({
         fields.categoryId = value?.id ?? null;
       } else if (field === 'duration') {
         fields.estimatedMinutes = positiveMinutes(value);
+      } else if (field === 'description') {
+        const trimmed = String(value ?? '').trim();
+        fields.description = trimmed.length > 0 ? trimmed : null;
+      } else if (field === 'type') {
+        if (!TYPES.has(value)) {
+          throw new AppError('Choose fixed or flexible.', {
+            statusCode: 400,
+            code: 'SCHEDULING_TYPE_INVALID',
+          });
+        }
+        fields.schedulingType = value;
       } else {
         throw new AppError('That edit is not supported.', {
           statusCode: 400,
@@ -442,13 +496,326 @@ export function createFlowService({
         });
       }
 
-      const task = await plans.editTask(user, session.payload.taskRef, fields, {
+      if (kind === 'event') {
+        if (!['title', 'description', 'type'].includes(field)) {
+          throw new AppError('That field does not apply to a calendar commitment.', {
+            statusCode: 400,
+            code: 'EDIT_FIELD_INVALID',
+          });
+        }
+
+        const eventFields = { title: fields.title, description: fields.description };
+        if (field === 'type') eventFields.isFixed = value === 'fixed';
+
+        const result = await plans.editEvent(user, session.payload.taskRef, eventFields, {
+          reason: `Edited ${field} from the planner`,
+        });
+
+        await sessions.clear(user);
+
+        return { kind, item: result.event, field, undoRef: result.undoRef ?? null };
+      }
+
+      const result = await plans.editTask(user, session.payload.taskRef, fields, {
         reason: `Edited ${field} from the planner`,
       });
 
       await sessions.clear(user);
 
-      return { task, field };
+      return { kind, item: result.task, field, undoRef: result.undoRef ?? null };
+    },
+
+    /* ------------------------------------------------- exact schedule flow */
+
+    /**
+     * Start editing the exact date and start/end times of a task or a calendar
+     * commitment. Nothing is written until the confirmation step.
+     */
+    async startSchedule(user, { kind = 'task', item }) {
+      const timeZone = user.timezone || 'Africa/Nairobi';
+      const startValue = kind === 'event' ? item.starts_at : item.scheduled_start;
+      const endValue = kind === 'event' ? item.ends_at : item.scheduled_end;
+
+      const durationMinutes =
+        startValue && endValue
+          ? Math.round(
+              (new Date(endValue).getTime() - new Date(startValue).getTime()) / 60000
+            )
+          : item.estimated_minutes ?? 30;
+
+      const date = startValue
+        ? zonedDateOf(startValue, timeZone)
+        : todayInZone(timeZone);
+      const start = startValue
+        ? minutesToHHMM(minutesOfDay(startValue, timeZone))
+        : null;
+      const end =
+        startValue && endValue
+          ? minutesToHHMM(minutesOfDay(endValue, timeZone))
+          : null;
+
+      return sessions.start(user, {
+        flow: SCHEDULE_FLOW,
+        step: start ? 'schedule_start' : 'schedule_date',
+        payload: {
+          kind,
+          ref: item.id.slice(0, 8),
+          title: item.title,
+          date,
+          start,
+          end,
+          durationMinutes: durationMinutes > 0 ? durationMinutes : 30,
+          originalDate: date,
+          originalStart: start,
+          originalEnd: end,
+          isFixed:
+            kind === 'event'
+              ? Boolean(item.is_fixed)
+              : item.scheduling_type === 'fixed',
+          conflict: null,
+        },
+        replace: true,
+      });
+    },
+
+    async requestScheduleDate(user) {
+      const session = await scheduleSession(user);
+      return sessions.update(user, { step: 'schedule_date', payload: session.payload });
+    },
+
+    async setScheduleDate(user, date) {
+      if (!isDateString(date)) {
+        throw new AppError('Use DD/MM or YYYY-MM-DD for the new date.', {
+          statusCode: 400,
+          code: 'DATE_INVALID',
+        });
+      }
+
+      const session = await scheduleSession(user);
+
+      return sessions.update(user, {
+        step: 'schedule_start',
+        payload: { ...session.payload, date },
+      });
+    },
+
+    async requestScheduleStart(user) {
+      const session = await scheduleSession(user);
+      return sessions.update(user, { step: 'schedule_start', payload: session.payload });
+    },
+
+    /** Keep the existing start time and move on to the end time. */
+    async keepScheduleStart(user) {
+      const session = await scheduleSession(user);
+
+      if (!session.payload.start) {
+        throw new AppError('Send the new start time first.', {
+          statusCode: 400,
+          code: 'TIME_REQUIRED',
+        });
+      }
+
+      return sessions.update(user, { step: 'schedule_end', payload: session.payload });
+    },
+
+    async setScheduleStart(user, time) {
+      const session = await scheduleSession(user);
+
+      if (!isTimeString(time)) {
+        throw new AppError('Use 24-hour time like 20:30.', {
+          statusCode: 400,
+          code: 'TIME_INVALID',
+        });
+      }
+
+      const duration = session.payload.durationMinutes ?? 30;
+      const startMinutes = hhmmToMinutes(time);
+
+      if (startMinutes + duration > 24 * 60) {
+        throw new AppError('That start plus the duration runs past midnight.', {
+          statusCode: 400,
+          code: 'TIME_ORDER_INVALID',
+        });
+      }
+
+      const end = minutesToHHMM(startMinutes + duration);
+
+      return sessions.update(user, {
+        step: 'schedule_end',
+        payload: { ...session.payload, start: time, end },
+      });
+    },
+
+    async requestScheduleEnd(user) {
+      const session = await scheduleSession(user);
+      return sessions.update(user, { step: 'schedule_end', payload: session.payload });
+    },
+
+    async setScheduleEnd(user, time) {
+      const session = await scheduleSession(user);
+
+      if (!isTimeString(time)) {
+        throw new AppError('Use 24-hour time like 21:00.', {
+          statusCode: 400,
+          code: 'TIME_INVALID',
+        });
+      }
+
+      const startMinutes = hhmmToMinutes(session.payload.start);
+      const endMinutes = hhmmToMinutes(time);
+
+      if (endMinutes <= startMinutes) {
+        throw new AppError('The end time must be later than the start time.', {
+          statusCode: 400,
+          code: 'TIME_ORDER_INVALID',
+        });
+      }
+
+      return this.previewSchedule(user, {
+        ...session.payload,
+        end: time,
+        durationMinutes: endMinutes - startMinutes,
+      });
+    },
+
+    /** Keep the proposed end time and move to the confirmation step. */
+    async keepScheduleEnd(user) {
+      const session = await scheduleSession(user);
+      return this.previewSchedule(user, session.payload);
+    },
+
+    async previewSchedule(user, payload) {
+      if (!payload.start || !payload.end) {
+        throw new AppError('Both a start and an end time are needed.', {
+          statusCode: 400,
+          code: 'TIME_REQUIRED',
+        });
+      }
+
+      const preview = await plans.previewScheduleChange(user, {
+        kind: payload.kind,
+        reference: payload.ref,
+        date: payload.date,
+        start: payload.start,
+        end: payload.end,
+      });
+
+      const session = await scheduleSession(user);
+
+      return sessions.update(user, {
+        step: 'schedule_confirm',
+        payload: {
+          ...session.payload,
+          kind: payload.kind,
+          ref: payload.ref,
+          title: payload.title,
+          date: payload.date,
+          start: payload.start,
+          end: payload.end,
+          durationMinutes:
+            hhmmToMinutes(payload.end) - hhmmToMinutes(payload.start),
+          conflict: preview.conflict
+            ? {
+                kind: preview.conflict.kind,
+                title: preview.conflict.title,
+                startsAt: preview.conflict.startsAt,
+                endsAt: preview.conflict.endsAt,
+              }
+            : null,
+        },
+      });
+    },
+
+    /**
+     * Change a duration while preserving the start time, through the same
+     * confirmation step so a conflict still needs explicit acceptance.
+     */
+    async startDurationChange(user, { kind = 'task', item, minutes }) {
+      const duration = positiveMinutes(minutes);
+      const timeZone = user.timezone || 'Africa/Nairobi';
+      const startValue = kind === 'event' ? item.starts_at : item.scheduled_start;
+
+      if (!startValue) {
+        throw new AppError('Schedule the item first, then change its duration.', {
+          statusCode: 409,
+          code: 'SCHEDULE_REQUIRED',
+        });
+      }
+
+      const startMinutes = minutesOfDay(startValue, timeZone);
+      if (startMinutes + duration > 24 * 60) {
+        throw new AppError('That duration runs past midnight.', {
+          statusCode: 400,
+          code: 'TIME_ORDER_INVALID',
+        });
+      }
+
+      const date = zonedDateOf(startValue, timeZone);
+      const start = minutesToHHMM(startMinutes);
+      const end = minutesToHHMM(startMinutes + duration);
+
+      await sessions.start(user, {
+        flow: SCHEDULE_FLOW,
+        step: 'schedule_confirm',
+        payload: {
+          kind,
+          ref: item.id.slice(0, 8),
+          title: item.title,
+          date,
+          start,
+          end,
+          durationMinutes: duration,
+          pendingDurationMinutes: duration,
+          originalDate: date,
+          originalStart: start,
+          originalEnd:
+            kind === 'event'
+              ? minutesToHHMM(minutesOfDay(item.ends_at, timeZone))
+              : item.scheduled_end
+                ? minutesToHHMM(minutesOfDay(item.scheduled_end, timeZone))
+                : null,
+          isFixed:
+            kind === 'event'
+              ? Boolean(item.is_fixed)
+              : item.scheduling_type === 'fixed',
+          conflict: null,
+        },
+        replace: true,
+      });
+
+      return this.previewSchedule(user, {
+        kind,
+        ref: item.id.slice(0, 8),
+        title: item.title,
+        date,
+        start,
+        end,
+      });
+    },
+
+    async saveSchedule(user, { acceptConflict = false } = {}) {
+      const session = await scheduleSession(user);
+
+      if (!['schedule_confirm', 'schedule_end'].includes(session.step)) {
+        throw new AppError('Confirm the new time first.', {
+          statusCode: 409,
+          code: 'FLOW_STEP_MISMATCH',
+        });
+      }
+
+      const result = await plans.saveScheduledChange(user, {
+        kind: session.payload.kind,
+        reference: session.payload.ref,
+        date: session.payload.date,
+        start: session.payload.start,
+        end: session.payload.end,
+        estimatedMinutes: session.payload.pendingDurationMinutes ?? null,
+        acceptConflict,
+      });
+
+      await sessions.clear(user);
+
+      return result;
     },
   };
 }

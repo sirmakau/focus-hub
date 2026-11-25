@@ -22,14 +22,17 @@ The product specification lives in `../focushub.txt`.
 | Button-driven weekly planner (dashboard, day pages, task cards) | Done |
 | Guided task creation + editing (`planner_sessions`) | Done |
 | Reschedule with slot suggestions and conflict checks | Done |
+| Manual task and commitment editing (exact times, conflicts, undo) | Done |
+| Calendar event history (`calendar_event_history`) | Code done; migration 003 pending |
 | Weekly review | Done |
 | Skip / postpone | Not implemented |
 | Reminder engine | Not implemented (skeleton only) |
 | Scheduling engine (slots, buffers, energy) | Done for user-initiated scheduling |
 | Daily reviews | Not implemented (skeleton only) |
 | AI / natural language | Not implemented |
-| Test suite | 94 tests, passing |
-| `002_planner_sessions.sql` applied to Neon | **Not applied yet** |
+| Test suite | 117 tests, passing |
+| `002_planner_sessions.sql` | Run locally; not verified against the hosted database |
+| `003_manual_edits.sql` applied | **Not applied yet** |
 
 ---
 
@@ -136,6 +139,13 @@ Migration statements were validated inside a transaction that was rolled back, s
 
 ---
 
+### Manual editing (latest increment)
+- Tasks and calendar commitments have separate cards and edit menus; fixed items are fully editable by their owner, only protected from automation.
+- Exact date and `HH:MM` start/end editing with end-later-than-start validation and `Africa/Nairobi` wall-clock conversion.
+- Conflicts name the exact item and time; the user can go back or explicitly **Save anyway**, and no other item is ever moved.
+- Every change records previous/new values, actor and timestamp; tasks use `task_history.details`, commitments use `calendar_event_history`.
+- Undo restores the previous snapshot and adds a new history row instead of deleting the audit trail; commitment deletion is a soft delete.
+
 ## 5. Not implemented
 
 These exist as files or table definitions only — the bot does not use them yet:
@@ -143,7 +153,7 @@ These exist as files or table definitions only — the bot does not use them yet
 - **Reminders** — the queue table exists; `src/workers/reminder.worker.js` is a skeleton. No delivery, retries, or inline buttons.
 - **Unattended rescheduling** — only the guarded `autoReschedule` path exists; nothing calls it on a timer yet.
 - **Recurring events** — `calendar_events.recurrence_rule` is stored but not expanded, so only single events appear in a day.
-- **`task_history` display** — the last history entry is shown on a task card; full history is not browseable.
+- **Full history display** — the last history entry and an Undo action are shown on item cards; the full timeline is not browseable.
 - **Daily reviews** — weekly review is read-only and computed live; `src/services/review.service.js` is still a skeleton.
 - **AI / natural language** — no LLM integration; guided flows and slash commands only.
 - **Skip and postpone** — `skipped` and `postponed` are already valid `HISTORY_EVENT_TYPES`, but no command reaches them.
@@ -155,12 +165,11 @@ These exist as files or table definitions only — the bot does not use them yet
 1. Confirm the new build is live by sending `/help` to the bot.
 2. Exercise `/start`, `/today`, `/pending`, `/add`, `/done`, `/cancel` end to end with a real chat.
 3. Implement skip and postpone, writing `skipped` / `postponed` history entries.
-4. Decide whether to run `npm run db:migrate` against Neon, which creates `schema_migrations`.
-5. Apply `002_planner_sessions.sql`, then exercise the planner in a live chat.
-6. Build the reminder worker: queue polling, delivery, retries, interactive buttons.
-7. Expand recurring calendar events and unattended (explainable) rescheduling.
-8. Daily reviews and reflections.
-9. Natural-language layer over the existing flows.
+4. Apply `003_manual_edits.sql` wherever the bot runs, then exercise manual editing in a live chat.
+5. Build the reminder worker: queue polling, delivery, retries, interactive buttons.
+6. Expand recurring calendar events and unattended (explainable) rescheduling.
+7. Daily reviews and reflections.
+8. Natural-language layer over the existing flows.
 
 ## 7. Principles
 

@@ -47,8 +47,14 @@ export function weekKeyboard(week) {
   ]);
 }
 
-export function dayKeyboard({ date, tasks = [] }) {
-  const rows = tasks.map((task) => [button(`Open: ${task.title}`, `t:${task.id.slice(0, 8)}`)]);
+export function dayKeyboard({ date, tasks = [], events = [] }) {
+  const rows = events.map((event) => [
+    button(`📌 ${event.title}`, `ev:${event.id.slice(0, 8)}`),
+  ]);
+
+  rows.push(
+    ...tasks.map((task) => [button(`Open: ${task.title}`, `t:${task.id.slice(0, 8)}`)])
+  );
 
   rows.push([button('➕ Add task', `add:${date}`)]);
   rows.push([button('⬅ Back to week', 'home')]);
@@ -56,7 +62,7 @@ export function dayKeyboard({ date, tasks = [] }) {
   return keyboard(rows);
 }
 
-export function taskKeyboard({ task, backData }) {
+export function taskKeyboard({ task, backData, undoData = null }) {
   const rows = [];
 
   if (task.status === 'pending' || task.status === 'in_progress') {
@@ -70,9 +76,44 @@ export function taskKeyboard({ task, backData }) {
     ]);
   }
 
+  if (undoData) {
+    rows.push([button('↩ Undo last change', undoData)]);
+  }
+
   rows.push([button('⬅ Back', backData)]);
 
   return keyboard(rows);
+}
+
+export function eventKeyboard({ event, backData, undoData = null }) {
+  const ref = event.id.slice(0, 8);
+  const rows = [
+    [button('✏️ Edit commitment', `evm:${ref}`)],
+    [
+      button('🕐 Date & time', `evw:${ref}`),
+      button(
+        event.is_fixed ? '📌 Fixed' : '🔁 Flexible',
+        `evf:${ref}:${event.is_fixed ? 'flexible' : 'fixed'}`
+      ),
+    ],
+    [button('🗑 Delete commitment', `evx:${ref}`)],
+  ];
+
+  if (undoData) {
+    rows.push([button('↩ Undo last change', undoData)]);
+  }
+
+  rows.push([button('⬅ Back', backData)]);
+
+  return keyboard(rows);
+}
+
+export function eventDeleteConfirmKeyboard({ reference }) {
+  const ref = reference.slice(0, 8);
+
+  return keyboard([
+    [button('🗑 Yes, delete', `evxy:${ref}`), button('❌ Keep it', `evxn:${ref}`)],
+  ]);
 }
 
 export function confirmKeyboard({ yesData, noData, cancelData }) {
@@ -205,7 +246,8 @@ export function flowConfirmKeyboard() {
 export function editMenuKeyboard({ reference, categories = [] }) {
   const ref = reference.slice(0, 8);
   const rows = [
-    [button('✏️ Title', `et:${ref}`)],
+    [button('✏️ Title', `et:${ref}`), button('📝 Description', `edesc:${ref}`)],
+    [button('📌 Fixed', `ey:${ref}:fixed`), button('🔁 Flexible', `ey:${ref}:flexible`)],
     [
       button('P: Low', `ep:${ref}:low`),
       button('P: Normal', `ep:${ref}:normal`),
@@ -228,10 +270,82 @@ export function editMenuKeyboard({ reference, categories = [] }) {
     button('1 hour', `ed:${ref}:60`),
     button('2 hours', `ed:${ref}:120`),
   ]);
-  rows.push([button('🔁 Change day/time', `rs:${ref}`)]);
+  rows.push([button('⏱ Custom duration', `edc:${ref}`)]);
+  rows.push([button('🕐 Exact date & time', `ew:${ref}`)]);
   rows.push([button('⬅ Back to task', `t:${ref}`)]);
 
   return keyboard(rows);
+}
+
+export function eventEditMenuKeyboard({ reference }) {
+  const ref = reference.slice(0, 8);
+
+  return keyboard([
+    [button('✏️ Title', `evt:${ref}`), button('📝 Description', `evd:${ref}`)],
+    [button('📌 Fixed', `evf:${ref}:fixed`), button('🔁 Flexible', `evf:${ref}:flexible`)],
+    [button('🕐 Exact date & time', `evw:${ref}`)],
+    [button('⬅ Back to commitment', `ev:${ref}`)],
+  ]);
+}
+
+export function scheduleDateKeyboard({ reference, dates = [] }) {
+  const ref = reference.slice(0, 8);
+  const rows = [];
+
+  for (let index = 0; index < dates.length; index += 2) {
+    const row = [button(formatDateShort(dates[index]), `esd:${ref}:${dates[index]}`)];
+    if (dates[index + 1]) {
+      row.push(button(formatDateShort(dates[index + 1]), `esd:${ref}:${dates[index + 1]}`));
+    }
+    rows.push(row);
+  }
+
+  rows.push([button('📅 Another date', 'esch')]);
+  rows.push([button('✖ Cancel', 'esc')]);
+
+  return keyboard(rows);
+}
+
+export function scheduleStartKeyboard({ reference, start = null }) {
+  const rows = [];
+
+  if (start) {
+    rows.push([button(`Keep start ${start}`, 'esk')]);
+  }
+
+  rows.push([button('📅 Change date', `esch`)]);
+  rows.push([button('✖ Cancel', 'esc')]);
+
+  return keyboard(rows);
+}
+
+export function scheduleEndKeyboard({ end = null }) {
+  const rows = [];
+
+  if (end) {
+    rows.push([button(`Keep end ${end}`, 'eske')]);
+  }
+
+  rows.push([button('🕐 Change start', 'est')]);
+  rows.push([button('✖ Cancel', 'esc')]);
+
+  return keyboard(rows);
+}
+
+export function scheduleConfirmKeyboard({ hasConflict = false }) {
+  if (hasConflict) {
+    return keyboard([
+      [button('⚠️ Save anyway', 'esfc')],
+      [button('🕐 Choose another time', 'est')],
+      [button('✖ Cancel', 'esc')],
+    ]);
+  }
+
+  return keyboard([
+    [button('✅ Yes, save', 'esok')],
+    [button('🕐 Change start', 'est'), button('🕑 Change end', 'ese')],
+    [button('✖ Cancel', 'esc')],
+  ]);
 }
 
 export function pagerKeyboard({ page, pages, prefix }) {
@@ -270,6 +384,17 @@ const ROUTES = [
   { action: 'add', pattern: /^add$/ },
   { action: 'add', pattern: new RegExp(`^add:(${DATE})$`) },
   { action: 'task', pattern: new RegExp(`^t:(${REF})$`) },
+  { action: 'event', pattern: new RegExp(`^ev:(${REF})$`) },
+  { action: 'eventMenu', pattern: new RegExp(`^evm:(${REF})$`) },
+  { action: 'eventTitle', pattern: new RegExp(`^evt:(${REF})$`) },
+  { action: 'eventDescription', pattern: new RegExp(`^evd:(${REF})$`) },
+  { action: 'eventSchedule', pattern: new RegExp(`^evw:(${REF})$`) },
+  { action: 'eventFixed', pattern: /^evf:([0-9a-f]{4,8}):(fixed|flexible)$/ },
+  { action: 'eventDeleteAsk', pattern: new RegExp(`^evx:(${REF})$`) },
+  { action: 'eventDeleteYes', pattern: new RegExp(`^evxy:(${REF})$`) },
+  { action: 'eventDeleteNo', pattern: new RegExp(`^evxn:(${REF})$`) },
+  { action: 'undoTask', pattern: new RegExp(`^undo:(${REF}):(${REF})$`) },
+  { action: 'undoEvent', pattern: new RegExp(`^undoe:(${REF}):(${REF})$`) },
   { action: 'completeAsk', pattern: new RegExp(`^done:(${REF})$`) },
   { action: 'completeYes', pattern: new RegExp(`^doney:(${REF})$`) },
   { action: 'completeNo', pattern: new RegExp(`^donen:(${REF})$`) },
@@ -285,6 +410,19 @@ const ROUTES = [
   { action: 'editPriority', pattern: /^ep:([0-9a-f]{4,8}):(low|normal|high|urgent)$/ },
   { action: 'editCategory', pattern: /^ec:([0-9a-f]{4,8}):([0-9a-f]{4,8}|none)$/ },
   { action: 'editDuration', pattern: /^ed:([0-9a-f]{4,8}):([0-9]{1,3})$/ },
+  { action: 'editDescription', pattern: new RegExp(`^edesc:(${REF})$`) },
+  { action: 'editType', pattern: /^ey:([0-9a-f]{4,8}):(fixed|flexible)$/ },
+  { action: 'editCustomDuration', pattern: new RegExp(`^edc:(${REF})$`) },
+  { action: 'taskSchedule', pattern: new RegExp(`^ew:(${REF})$`) },
+  { action: 'taskStartTime', pattern: new RegExp(`^est(?::${REF})?$`) },
+  { action: 'taskEndTime', pattern: new RegExp(`^ese(?::${REF})?$`) },
+  { action: 'scheduleDate', pattern: new RegExp(`^esd:(${REF}):(${DATE})$`) },
+  { action: 'scheduleDatePrompt', pattern: /^esch$/ },
+  { action: 'scheduleKeepStart', pattern: /^esk$/ },
+  { action: 'scheduleKeepEnd', pattern: /^eske$/ },
+  { action: 'scheduleSave', pattern: /^esok$/ },
+  { action: 'scheduleForceSave', pattern: /^esfc$/ },
+  { action: 'scheduleCancel', pattern: /^esc$/ },
   { action: 'flowDay', pattern: new RegExp(`^fd:(${DATE})$`) },
   { action: 'flowType', pattern: /^ft:(fixed|flexible)$/ },
   { action: 'flowCategory', pattern: /^fc:([0-9a-f]{4,8}|none)$/ },

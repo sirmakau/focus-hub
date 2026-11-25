@@ -204,12 +204,13 @@ export function createTaskRepository(db = { query }) {
     },
 
     async insertHistory(client, entry) {
-      await exec(client)(
+      const { rows } = await exec(client)(
         `INSERT INTO task_history
            (task_id, user_id, event_type, old_status, new_status,
             old_scheduled_start, new_scheduled_start,
-            old_scheduled_end, new_scheduled_end, reason, actor)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            old_scheduled_end, new_scheduled_end, details, reason, actor)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+         RETURNING id`,
         [
           entry.taskId,
           entry.userId,
@@ -220,15 +221,20 @@ export function createTaskRepository(db = { query }) {
           entry.newScheduledStart ?? null,
           entry.oldScheduledEnd ?? null,
           entry.newScheduledEnd ?? null,
+          entry.details ? JSON.stringify(entry.details) : null,
           entry.reason ?? null,
           entry.actor ?? 'user',
         ]
       );
+      return rows[0]?.id ?? null;
     },
 
     async findHistory(client, taskId, userId, limit = 5) {
       const { rows } = await exec(client)(
-        `SELECT event_type, old_status, new_status, reason, actor, created_at
+        `SELECT id, event_type, old_status, new_status,
+                old_scheduled_start, new_scheduled_start,
+                old_scheduled_end, new_scheduled_end,
+                details, reason, actor, created_at
          FROM task_history
          WHERE task_id = $1 AND user_id = $2
          ORDER BY created_at DESC
@@ -236,6 +242,20 @@ export function createTaskRepository(db = { query }) {
         [taskId, userId, limit]
       );
       return rows;
+    },
+
+    /** Resolve one history row from the short reference used by Undo. */
+    async findHistoryByPrefix(client, userId, taskId, prefix) {
+      const { rows } = await exec(client)(
+        `SELECT id, event_type, details, reason, created_at
+         FROM task_history
+         WHERE task_id = $1 AND user_id = $2 AND id::text LIKE $3 || '%'
+         ORDER BY created_at DESC
+         LIMIT 2`,
+        [taskId, userId, String(prefix)]
+      );
+      if (rows.length > 1) return { ambiguous: true, entry: null };
+      return { ambiguous: false, entry: rows[0] ?? null };
     },
   };
 }

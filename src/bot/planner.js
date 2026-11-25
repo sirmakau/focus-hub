@@ -11,6 +11,9 @@ import {
   dayKeyboard,
   decodeCallbackData,
   editMenuKeyboard,
+  eventDeleteConfirmKeyboard,
+  eventEditMenuKeyboard,
+  eventKeyboard,
   flowCategoryKeyboard,
   flowConfirmKeyboard,
   flowDeadlineKeyboard,
@@ -22,6 +25,10 @@ import {
   pagerKeyboard,
   rescheduleConfirmKeyboard,
   rescheduleDaysKeyboard,
+  scheduleConfirmKeyboard,
+  scheduleDateKeyboard,
+  scheduleEndKeyboard,
+  scheduleStartKeyboard,
   slotKeyboard,
   taskKeyboard,
   weekKeyboard,
@@ -79,6 +86,19 @@ const FLOW_STEP_FOR = {
 
 function tzOf(user) {
   return user.timezone || 'Africa/Nairobi';
+}
+
+/** Build an Undo callback from the latest history row that kept a snapshot. */
+function buttonOrNull(text, data) {
+  return data ? { text, callback_data: data } : null;
+}
+
+function undoDataFor(history, kind, reference) {
+  const entry = (history ?? []).find((row) => row.id && row.details?.previous);
+  if (!entry) return null;
+
+  const prefix = kind === 'event' ? 'undoe' : 'undo';
+  return `${prefix}:${reference}:${String(entry.id).slice(0, 8)}`;
 }
 
 function timeRange(task, timeZone) {
@@ -222,7 +242,11 @@ export function createPlannerBot({
 
     return {
       text: lines.join('\n'),
-      keyboard: dayKeyboard({ date: day.date, tasks: visibleTasks }),
+      keyboard: dayKeyboard({
+        date: day.date,
+        tasks: visibleTasks,
+        events: day.events,
+      }),
     };
   }
 
@@ -259,10 +283,61 @@ export function createPlannerBot({
     const backData = task.scheduled_start
       ? `d:${zonedDateOf(task.scheduled_start, timeZone)}`
       : 'u';
+    const reference = task.id.slice(0, 8);
 
     return {
       text: lines.join('\n'),
-      keyboard: taskKeyboard({ task, backData }),
+      keyboard: taskKeyboard({
+        task,
+        backData,
+        undoData: undoDataFor(history, 'task', reference),
+      }),
+    };
+  }
+
+  function eventCardView({ event, history }, timeZone, prefix = null) {
+    const lines = [];
+
+    if (prefix) lines.push(prefix, '');
+
+    lines.push(`📌 Commitment: ${event.title}`);
+    lines.push(
+      `Time: ${formatDateShort(zonedDateOf(event.starts_at, timeZone))} ${formatClock(
+        event.starts_at,
+        timeZone
+      )}–${formatClock(event.ends_at, timeZone)}`
+    );
+
+    const minutes = Math.round(
+      (new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime()) / 60000
+    );
+    lines.push(`Duration: ${durationLabel(minutes)}`);
+    lines.push(`Type: ${event.is_fixed ? 'Fixed' : 'Flexible'}`);
+
+    if (event.is_fixed) {
+      lines.push(
+        'Fixed means automatic scheduling will never move it. You can still edit or move it yourself.'
+      );
+    }
+
+    if (event.description) {
+      lines.push('', event.description);
+    }
+
+    if (history && history.length > 0) {
+      const last = history[0];
+      lines.push('', `Last change: ${last.event_type} by ${last.actor}`);
+    }
+
+    const reference = event.id.slice(0, 8);
+
+    return {
+      text: lines.join('\n'),
+      keyboard: eventKeyboard({
+        event,
+        backData: `d:${zonedDateOf(event.starts_at, timeZone)}`,
+        undoData: undoDataFor(history, 'event', reference),
+      }),
     };
   }
 
@@ -479,10 +554,115 @@ export function createPlannerBot({
       }
 
       case 'edit_menu':
-      case 'edit_title': {
+      case 'edit_title':
+      case 'edit_description':
+      case 'edit_duration': {
+        if (payload.kind === 'event') {
+          if (session.step === 'edit_title') {
+            return {
+              text: '✏️ Send the new commitment name.',
+              keyboard: backKeyboard(`evm:${payload.taskRef}`),
+            };
+          }
+          if (session.step === 'edit_description') {
+            return {
+              text: '📝 Send the new description, or "none" to clear it.',
+              keyboard: backKeyboard(`evm:${payload.taskRef}`),
+            };
+          }
+          return {
+            text: `✏️ Edit commitment\n\nChoose a field. Changes save immediately.`,
+            keyboard: eventEditMenuKeyboard({ reference: payload.taskRef }),
+          };
+        }
+
         return editMenuView(user, payload.taskRef, {
           promptingTitle: session.step === 'edit_title',
+          promptingDescription: session.step === 'edit_description',
+          promptingDuration: session.step === 'edit_duration',
         });
+      }
+
+      case 'schedule_date': {
+        const dates = Array.from({ length: 7 }, (_, index) =>
+          addDays(todayInZone(timeZone, now()), index)
+        );
+        return {
+          text: [
+            `🕐 ${payload.title ?? 'Item'} — which date?`,
+            '',
+            'Pick a day, or send a date as DD/MM or YYYY-MM-DD.',
+          ].join('\n'),
+          keyboard: scheduleDateKeyboard({ reference: payload.ref, dates }),
+        };
+      }
+
+      case 'schedule_start':
+        return {
+          text: [
+            'What should the new start time be?',
+            '',
+            `📅 ${formatDateLong(payload.date)}`,
+            payload.start ? `Current start: ${payload.start}` : null,
+            '',
+            'Send a 24-hour time, for example 20:30.',
+          ]
+            .filter((line) => line !== null)
+            .join('\n'),
+          keyboard: scheduleStartKeyboard({
+            reference: payload.ref,
+            start: payload.start,
+          }),
+        };
+
+      case 'schedule_end':
+        return {
+          text: [
+            'What should the new end time be?',
+            '',
+            `📅 ${formatDateLong(payload.date)}`,
+            payload.start ? `Start: ${payload.start}` : null,
+            payload.end ? `Proposed end: ${payload.end}` : null,
+            '',
+            'Send a 24-hour time, for example 21:00.',
+          ]
+            .filter((line) => line !== null)
+            .join('\n'),
+          keyboard: scheduleEndKeyboard({ end: payload.end }),
+        };
+
+      case 'schedule_confirm': {
+        const conflict = payload.conflict;
+        const lines = [
+          'Confirm this change?',
+          '',
+          `Current: ${payload.originalDate ? formatDateShort(payload.originalDate) : 'unscheduled'} ${payload.originalStart ?? '—'}–${payload.originalEnd ?? '—'}`,
+          `New: ${formatDateShort(payload.date)} ${payload.start}–${payload.end}`,
+        ];
+
+        if (payload.isFixed) {
+          lines.push(
+            '',
+            '📌 This is a manual change to a fixed item. Automatic scheduling will still never move it.'
+          );
+        }
+
+        if (conflict) {
+          const label = conflict.kind === 'event' ? 'commitment' : 'task';
+          lines.push(
+            '',
+            `⚠️ This overlaps "${conflict.title}" (${label}, ${formatClock(
+              conflict.startsAt,
+              timeZone
+            )}–${formatClock(conflict.endsAt, timeZone)}).`,
+            'Nothing else will be moved. Saving anyway double-books that time.'
+          );
+        }
+
+        return {
+          text: lines.join('\n'),
+          keyboard: scheduleConfirmKeyboard({ hasConflict: Boolean(conflict) }),
+        };
       }
 
       default:
@@ -493,12 +673,30 @@ export function createPlannerBot({
     }
   }
 
-  async function editMenuView(user, reference, { promptingTitle = false } = {}) {
+  async function editMenuView(
+    user,
+    reference,
+    { promptingTitle = false, promptingDescription = false, promptingDuration = false } = {}
+  ) {
     const categories = await plans.listCategories(user);
 
     if (promptingTitle) {
       return {
         text: '✏️ Send the new task name.',
+        keyboard: backKeyboard(`e:${reference}`),
+      };
+    }
+
+    if (promptingDescription) {
+      return {
+        text: '📝 Send a new description, or "none" to clear it.',
+        keyboard: backKeyboard(`e:${reference}`),
+      };
+    }
+
+    if (promptingDuration) {
+      return {
+        text: '⏱ Send the duration in minutes (1–480). The start time stays the same.',
         keyboard: backKeyboard(`e:${reference}`),
       };
     }
@@ -534,6 +732,24 @@ export function createPlannerBot({
       messageId,
       ...taskCardView(card, tzOf(user), prefix),
     });
+  }
+
+  async function showEvent(user, chatId, messageId, reference, prefix = null) {
+    const card = await plans.eventCard(user, reference);
+    await present({
+      chatId,
+      messageId,
+      ...eventCardView(card, tzOf(user), prefix),
+    });
+  }
+
+  async function showScheduledItem(user, chatId, messageId, result, prefix) {
+    if (result.kind === 'event') {
+      await showEvent(user, chatId, messageId, result.item.id.slice(0, 8), prefix);
+      return;
+    }
+
+    await showTask(user, chatId, messageId, result.item.id.slice(0, 8), prefix);
   }
 
   async function openDashboard({ user, chatId }) {
@@ -689,8 +905,10 @@ export function createPlannerBot({
     let toast = null;
 
     try {
-      if (action.startsWith('flow') || action === 'editPriority' || action === 'editCategory' || action === 'editDuration') {
-        if (action === 'editPriority' || action === 'editCategory' || action === 'editDuration') {
+      const applyActions = new Set(['editPriority', 'editCategory', 'editType']);
+
+      if (action.startsWith('flow') || applyActions.has(action)) {
+        if (applyActions.has(action)) {
           const state = await flows.getState(user);
           if (!state) {
             throw new AppError('That form has expired. Open the task again.', {
@@ -705,9 +923,8 @@ export function createPlannerBot({
             });
           }
 
-          const reference = params[0];
           let value;
-          if (action === 'editPriority') {
+          if (action === 'editPriority' || action === 'editType') {
             value = params[1];
           } else if (action === 'editCategory') {
             const code = params[1];
@@ -732,10 +949,17 @@ export function createPlannerBot({
               ? 'priority'
               : action === 'editCategory'
                 ? 'category'
-                : 'duration';
+                : action === 'editType'
+                  ? 'type'
+                  : 'duration';
 
           const result = await flows.applyEdit(user, field, value);
-          await showTask(user, chatId, messageId, result.task.id.slice(0, 8), '✅ Updated.');
+
+          if (result.kind === 'event') {
+            await showEvent(user, chatId, messageId, result.item.id.slice(0, 8), '✅ Updated.');
+          } else {
+            await showTask(user, chatId, messageId, result.item.id.slice(0, 8), '✅ Updated.');
+          }
           toast = 'Updated';
         } else {
           toast = await handleFlowCallback(user, chatId, messageId, action, params);
@@ -781,6 +1005,202 @@ export function createPlannerBot({
           case 'task':
             await showTask(user, chatId, messageId, params[0]);
             break;
+          case 'event':
+            await showEvent(user, chatId, messageId, params[0]);
+            break;
+          case 'eventMenu': {
+            const card = await plans.eventCard(user, params[0]);
+            const session = await flows.startEdit(user, card.event, { kind: 'event' });
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'eventTitle':
+            await flows.requestEditTitle(user);
+            await present({
+              chatId,
+              messageId,
+              text: '✏️ Send the new commitment name.',
+              keyboard: backKeyboard(`evm:${params[0]}`),
+            });
+            break;
+          case 'eventDescription':
+            await flows.requestEditDescription(user);
+            await present({
+              chatId,
+              messageId,
+              text: '📝 Send the new description, or "none" to clear it.',
+              keyboard: backKeyboard(`evm:${params[0]}`),
+            });
+            break;
+          case 'eventFixed': {
+            let state = await flows.getState(user);
+            if (!state || state.step !== 'edit_menu' || state.payload.kind !== 'event') {
+              // The card offers the toggle directly, without opening the menu.
+              const card = await plans.eventCard(user, params[0]);
+              state = await flows.startEdit(user, card.event, { kind: 'event' });
+            }
+
+            const result = await flows.applyEdit(user, 'type', params[1]);
+            await showEvent(
+              user,
+              chatId,
+              messageId,
+              result.item.id.slice(0, 8),
+              `✅ Marked as ${params[1]}.`
+            );
+            toast = 'Updated';
+            break;
+          }
+          case 'eventSchedule': {
+            const card = await plans.eventCard(user, params[0]);
+            const session = await flows.startSchedule(user, {
+              kind: 'event',
+              item: card.event,
+            });
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'eventDeleteAsk': {
+            const card = await plans.eventCard(user, params[0]);
+            await present({
+              chatId,
+              messageId,
+              text: [
+                'Delete this commitment?',
+                '',
+                `📌 ${card.event.title}`,
+                `🕐 ${formatDateShort(
+                  zonedDateOf(card.event.starts_at, tzOf(user))
+                )} ${formatClock(card.event.starts_at, tzOf(user))}`,
+                '',
+                'It will be removed from your planner. You can undo this.',
+              ].join('\n'),
+              keyboard: eventDeleteConfirmKeyboard({ reference: params[0] }),
+            });
+            break;
+          }
+          case 'eventDeleteYes': {
+            const result = await plans.deleteEvent(user, params[0]);
+            toast = '🗑 Deleted';
+            await present({
+              chatId,
+              messageId,
+              text: `🗑 Deleted "${result.event.title}". You can undo this.`,
+              keyboard: {
+                inline_keyboard: [
+                  ...(result.undoRef
+                    ? [
+                        [
+                          buttonOrNull(
+                            '↩ Undo delete',
+                            `undoe:${result.event.id.slice(0, 8)}:${result.undoRef}`
+                          ),
+                        ],
+                      ]
+                    : []),
+                  [{ text: '⬅ Back to week', callback_data: 'home' }],
+                ],
+              },
+            });
+            break;
+          }
+          case 'eventDeleteNo':
+            await showEvent(user, chatId, messageId, params[0]);
+            break;
+          case 'undoTask': {
+            const [reference, undoRef] = params;
+            const result = await plans.undoChange(user, { kind: 'task', reference, undoRef });
+            toast = '↩ Undone';
+            await showTask(user, chatId, messageId, result.item.id.slice(0, 8), '↩ Change undone.');
+            break;
+          }
+          case 'undoEvent': {
+            const [reference, undoRef] = params;
+            const result = await plans.undoChange(user, { kind: 'event', reference, undoRef });
+            toast = '↩ Undone';
+            await showEvent(user, chatId, messageId, result.item.id.slice(0, 8), '↩ Change undone.');
+            break;
+          }
+          case 'taskSchedule': {
+            const card = await plans.taskCard(user, params[0]);
+            const session = await flows.startSchedule(user, { item: card.task });
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'taskStartTime': {
+            const state = await flows.getState(user);
+            const reference = state?.payload?.ref;
+            if (!reference) {
+              throw new AppError('That change has expired. Open the item again.', {
+                statusCode: 410,
+                code: 'FLOW_EXPIRED',
+              });
+            }
+            const session = await flows.requestScheduleStart(user);
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'taskEndTime': {
+            const state = await flows.getState(user);
+            if (!state?.payload?.ref) {
+              throw new AppError('That change has expired. Open the item again.', {
+                statusCode: 410,
+                code: 'FLOW_EXPIRED',
+              });
+            }
+            const session = await flows.requestScheduleEnd(user);
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'scheduleDate': {
+            const session = await flows.setScheduleDate(user, params[1]);
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'scheduleDatePrompt': {
+            await flows.requestScheduleDate(user);
+            const state = await flows.getState(user);
+            await renderFlow(user, chatId, state, messageId);
+            break;
+          }
+          case 'scheduleKeepStart': {
+            const session = await flows.keepScheduleStart(user);
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'scheduleKeepEnd': {
+            const session = await flows.keepScheduleEnd(user);
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
+          case 'scheduleSave':
+          case 'scheduleForceSave': {
+            const acceptConflict = action === 'scheduleForceSave';
+            const result = await flows.saveSchedule(user, { acceptConflict });
+            toast = '✅ Saved';
+            await showScheduledItem(
+              user,
+              chatId,
+              messageId,
+              result,
+              result.acceptedConflict
+                ? '⚠️ Saved with a conflict. Nothing else was moved.'
+                : '✅ Time updated.'
+            );
+            break;
+          }
+          case 'scheduleCancel': {
+            const state = await flows.getState(user);
+            await flows.clear(user);
+            if (state?.payload?.kind === 'event') {
+              await showEvent(user, chatId, messageId, state.payload.ref, 'Cancelled.');
+            } else if (state?.payload?.ref) {
+              await showTask(user, chatId, messageId, state.payload.ref, 'Cancelled.');
+            } else {
+              await showDashboard(user, chatId, messageId, 0);
+            }
+            break;
+          }
           case 'completeAsk': {
             const card = await plans.taskCard(user, params[0]);
             await present({
@@ -930,6 +1350,33 @@ export function createPlannerBot({
               keyboard: backKeyboard(`e:${params[0]}`),
             });
             break;
+          case 'editDescription':
+            await flows.requestEditDescription(user);
+            await present({
+              chatId,
+              messageId,
+              text: '📝 Send a new description, or "none" to clear it.',
+              keyboard: backKeyboard(`e:${params[0]}`),
+            });
+            break;
+          case 'editCustomDuration':
+            await flows.requestEditDuration(user);
+            await present({
+              chatId,
+              messageId,
+              text: '⏱ Send the duration in minutes (1–480). The start time stays the same.',
+              keyboard: backKeyboard(`e:${params[0]}`),
+            });
+            break;
+          case 'editDuration': {
+            const card = await plans.taskCard(user, params[0]);
+            const session = await flows.startDurationChange(user, {
+              item: card.task,
+              minutes: Number(params[1]),
+            });
+            await renderFlow(user, chatId, session, messageId);
+            break;
+          }
           default:
             throw new AppError('That button is not available.', {
               statusCode: 400,
@@ -1021,8 +1468,71 @@ export function createPlannerBot({
 
         case 'edit_title': {
           const result = await flows.applyEdit(user, 'title', text);
-          await showTask(user, chatId, null, result.task.id.slice(0, 8), '✅ Updated.');
+          await showScheduledItem(user, chatId, null, result, '✅ Updated.');
           return true;
+        }
+
+        case 'edit_description': {
+          const result = await flows.applyEdit(
+            user,
+            'description',
+            /^(none|clear|skip)$/i.test(text.trim()) ? '' : text
+          );
+          await showScheduledItem(user, chatId, null, result, '✅ Updated.');
+          return true;
+        }
+
+        case 'edit_duration': {
+          const minutes = normalizeDurationInput(text);
+          if (!minutes) {
+            throw new AppError('Send the duration in minutes, for example 90.', {
+              statusCode: 400,
+              code: 'DURATION_INVALID',
+            });
+          }
+          const state = await flows.getState(user);
+          const card = await plans.taskCard(user, state.payload.taskRef);
+          nextSession = await flows.startDurationChange(user, {
+            item: card.task,
+            minutes,
+          });
+          break;
+        }
+
+        case 'schedule_date': {
+          const date = parseUserDate(text, { timeZone: tzOf(user) });
+          if (!date) {
+            throw new AppError('Use DD/MM or YYYY-MM-DD for the new date.', {
+              statusCode: 400,
+              code: 'DATE_INVALID',
+            });
+          }
+          nextSession = await flows.setScheduleDate(user, date);
+          break;
+        }
+
+        case 'schedule_start': {
+          const time = normalizeTimeInput(text);
+          if (!time) {
+            throw new AppError('Use 24-hour time like 20:30.', {
+              statusCode: 400,
+              code: 'TIME_INVALID',
+            });
+          }
+          nextSession = await flows.setScheduleStart(user, time);
+          break;
+        }
+
+        case 'schedule_end': {
+          const time = normalizeTimeInput(text);
+          if (!time) {
+            throw new AppError('Use 24-hour time like 21:00.', {
+              statusCode: 400,
+              code: 'TIME_INVALID',
+            });
+          }
+          nextSession = await flows.setScheduleEnd(user, time);
+          break;
         }
 
         default:

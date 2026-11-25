@@ -5,9 +5,13 @@ import {
   addDayKeyboard,
   decodeCallbackData,
   editMenuKeyboard,
+  eventEditMenuKeyboard,
+  eventKeyboard,
   flowConfirmKeyboard,
   flowDurationKeyboard,
   rescheduleConfirmKeyboard,
+  scheduleConfirmKeyboard,
+  scheduleDateKeyboard,
   slotKeyboard,
   weekKeyboard,
 } from '../src/bot/keyboards.js';
@@ -63,6 +67,18 @@ test('every generated callback_data fits in 64 bytes and decodes', () => {
       slots: [{ start: '09:00', end: '10:00' }],
       backData: 't:abcd1234',
     }),
+    eventKeyboard({
+      event: { id: 'abcd1234', title: 'Lecture', is_fixed: true },
+      backData: 'd:2026-11-25',
+      undoData: 'undo:abcd1234:11112222',
+    }),
+    eventEditMenuKeyboard({ reference: 'abcd1234' }),
+    scheduleDateKeyboard({
+      reference: 'abcd1234',
+      dates: ['2026-11-25', '2026-11-26'],
+    }),
+    scheduleConfirmKeyboard({ hasConflict: true }),
+    scheduleConfirmKeyboard({ hasConflict: false }),
   ];
 
   for (const keyboard of keyboards) {
@@ -95,6 +111,21 @@ test('decodeCallbackData parses parameters', () => {
   assert.deepEqual(decodeCallbackData('ft:fixed'), {
     action: 'flowType',
     params: ['fixed'],
+  });
+
+  assert.deepEqual(decodeCallbackData('ey:abcd1234:flexible'), {
+    action: 'editType',
+    params: ['abcd1234', 'flexible'],
+  });
+
+  assert.deepEqual(decodeCallbackData('undo:abcd1234:11112222'), {
+    action: 'undoTask',
+    params: ['abcd1234', '11112222'],
+  });
+
+  assert.deepEqual(decodeCallbackData('esd:abcd1234:2026-11-25'), {
+    action: 'scheduleDate',
+    params: ['abcd1234', '2026-11-25'],
   });
 });
 
